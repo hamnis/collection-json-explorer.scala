@@ -3,8 +3,6 @@ package io.trygvis.cj
 import scala.collection.JavaConversions._
 import scala.xml.{Group, NodeSeq, Elem}
 import java.net.{MalformedURLException, URL, URI, URLEncoder}
-import net.hamnaberg.json.collection.{Property, Link, Json4sHelpers, JsonCollection}
-import net.hamnaberg.json.collection.Render.IMAGE
 import org.json4s.native.JsonMethods
 import java.io.{PrintWriter, StringWriter, Writer}
 
@@ -41,18 +39,8 @@ class Views(baseUrl: String) {
     result.toString
   }
 
-  /*
-  mixin get_name(link, prefix, i)
-  - var name = typeof link.name == 'string' ? link.name : undefined
-  - var prompt = typeof link.prompt == 'string' ? link.prompt : undefined
-  - var prefix = typeof prefix == 'string' ? prefix + ': ' : ''
-  |#{prefix + (name || prompt || '#' + i)}
-
-   */
   def getName(link: Link, prefix: String, i: Int) = {
-//    var name = link.name
-    val name = Json4sHelpers.getAsString(link.underlying, "name")
-    prefix + name.orElse(link.prompt).getOrElse("#" + i)
+    prefix + link.name.orElse(link.prompt).getOrElse("#" + i)
   }
 
   def index = {
@@ -132,17 +120,16 @@ class Views(baseUrl: String) {
     layout(content, None)
   }
 
-  def data(url: URI, params: Map[String, Seq[String]], result: Either[Throwable, JsonCollection], res: CjResponse) = {
+  def data(url: URI, targetParams: Map[String, String], result: Either[Throwable, Collection], res: CjResponse) = {
 
     def href(uri: URI) = {
 //      val splits = uri.getPath.split('/')
 //      for split in splits
-//      a(href=urlgenerator.render(split[1]), title='Explore #{split[1]}') #{split[0]}
-      uri.toURL.toExternalForm
+//      a(href=url generator.render(split[1]), title='Explore #{split[1]}') #{split[0]}
+      <a href={uri.toURL.toExternalForm}>{uri.toURL.toExternalForm}</a>
     }
 
     def link(link: Link) = {
-      val name = Json4sHelpers.getAsString(link.underlying, "name")
       <xml:group>
       <div>
         <a class="btn btn-primary btn-mini" href={render(link.href)}>Explore</a>
@@ -154,53 +141,51 @@ class Views(baseUrl: String) {
         <dt>rel</dt>
         <dd>{tryLink(link.rel)}</dd>
         <dt>name</dt>
-        <dd>{name.getOrElse(notSet)}</dd>
+        <dd>{link.name.getOrElse(notSet)}</dd>
         <dt>prompt</dt>
         <dd>{link.prompt.getOrElse(notSet)}</dd>
         <dt>render</dt>
-        <dd>{link.render.map(_.name).getOrElse(notSet)}</dd>
-        {link.render match {
-          case Some(IMAGE) =>
-            <dt>Image</dt>
-            <dd>
-              <a href={link.href.toURL.toExternalForm}>
-                <img src={link.href.toURL.toExternalForm} alt={name.getOrElse("")} title={name.getOrElse("")}/>
-              </a>
-            </dd>
-          case _ =>
-            NodeSeq.Empty
-        }}
+        <dd>{link.render.getOrElse(notSet)}</dd>
+        {if(link.render == "image")
+          <dt>Image</dt>
+          <dd>
+            <a href={link.href.toURL.toExternalForm}>
+              <img src={link.href.toURL.toExternalForm} alt={link.name.getOrElse("")} title={link.name.getOrElse("")}/>
+            </a>
+          </dd>
+        }
       </dl>
       </xml:group>
     }
 
-    def meta(implicit cj: JsonCollection) = <xml:group>
+    def meta(implicit cj: Collection) = <xml:group>
       <div class="row-fluid">
         <div class="span12">
           <dl>
             <dt>version</dt>
-            <dd>{cj.version.name}</dd>
+            <dd>{cj.version}</dd>
             <dt>href</dt>
-            <dd>
-              <div>{href(cj.href)}</div>
-            </dd>
+            <dd>{cj.href.map(href).getOrElse(notSet)}</dd>
           </dl>
         </div>
       </div>
-      <div class="row-fluid">
-        <div class="span12">
-          <p>
-            <a class="btn btn-primary" href={render(cj.href)}>Explore</a>
-            <a class="btn btn-primary" href={cj.href.toURL.toExternalForm}>Raw</a>
-            <a class="btn btn-danger" href={delete(cj.href)}>Delete</a>
-            <form action='http://redbot.org'>
-              <input name='uri' value={url.toURL.toExternalForm} type='hidden'/>
-              <input name='req_hdr' value='Accept: application/vnd.collection+json' type='hidden'/>
-              <button class='btn btn-primary' type='submit'>Check with redbot.org</button>
-            </form>
-          </p>
+      {if(cj.href.isDefined) {
+        val url = cj.href.get
+        <div class="row-fluid">
+          <div class="span12">
+            <p>
+              <a class="btn btn-primary" href={render(url)}>Explore</a>
+              <a class="btn btn-primary" href={url.toURL.toExternalForm}>Raw</a>
+              <a class="btn btn-danger" href={delete(url)}>Delete</a>
+              <form action='http://redbot.org'>
+                <input name='uri' value={url.toURL.toExternalForm} type='hidden'/>
+                <input name='req_hdr' value='Accept: application/vnd.collection+json' type='hidden'/>
+                <button class='btn btn-primary' type='submit'>Check with redbot.org</button>
+              </form>
+            </p>
+          </div>
         </div>
-      </div>
+      }}
       {cj.links match {
         case Nil =>
           NodeSeq.Empty
@@ -208,22 +193,18 @@ class Views(baseUrl: String) {
           <xml:group>
             <h2>Collection Links</h2>
             {cj.links.zipWithIndex.map { case (l, i) =>
-              val name = Json4sHelpers.getAsString(l.underlying, "name")
-              val title = l.prompt.orElse(name) match {
-                case Some(t) => ": " + t
-                case _ => ""
-              }
-              Group(Seq(<h3 id={"link-#" + (i + 1)}>{"Collection link #" + (i + 1) + title}</h3>, link(l)))
+              val title = l.prompt.orElse(l.name).map(": " + _).getOrElse("")
+              Group(Seq(<h3 id={"link-" + (i + 1)}>{"Collection link #" + (i + 1) + title}</h3>, link(l)))
             }}
           </xml:group>
       }}
       </xml:group>
 
-    // TODO: If the collection has prev/next links, add buttons to automaticaly navigate those.
+    // TODO: If the collection has prev/next links, add buttons to automatically navigate those.
     // TODO: Add ability to show the raw part of the collection.
-    def items(cj: JsonCollection) = {
+    def items(cj: Collection) = {
 
-      def itemLinks(cj: JsonCollection) = {
+      def itemLinks(cj: Collection) = {
         val first = cj.findLinkByRel("first")
         val prev = cj.findLinkByRel("prev")
         val next = cj.findLinkByRel("next")
@@ -247,21 +228,24 @@ class Views(baseUrl: String) {
             val links = item.links
             <div class="item-container">
               <h2 id={"item-" + (i + 1)}>Item #{i + 1}</h2>
+              {if(item.href.isDefined) {
+              val url = item.href.get
               <div class="fluid-row">
                 <div class="span12">
                   <p>
-                    <a class="btn btn-primary btn-mini" href={render(item.href)}>Explore</a>
-                    <a class="btn btn-primary btn-mini" href={item.href.toURL.toExternalForm}>Raw</a>
+                    <a class="btn btn-primary btn-mini" href={render(url)}>Explore</a>
+                    <a class="btn btn-primary btn-mini" href={url.toURL.toExternalForm}>Raw</a>
                     <a class="btn btn-primary btn-mini" onClick='var item = $(this).parentsUntil("#items").last(); item.find(".item-form").toggle(); item.find(".item-data").toggle()'>Edit</a>
-                    <a class="btn btn-danger btn-mini" href={delete(item.href)}>Delete</a>
+                    <a class="btn btn-danger btn-mini" href={delete(url)}>Delete</a>
                   </p>
                 </div>
               </div>
+              }}
               <div class="fluid-row">
                 <div class="span12">
                   <dl>
                     <dt>href</dt>
-                    <dd><div>{href(item.href)}</div></dd>
+                    <dd><div>{item.href.map(href).getOrElse(notSet)}</div></dd>
                   </dl>
                 </div>
               </div>
@@ -277,25 +261,25 @@ class Views(baseUrl: String) {
               <div class="item-data fluid-row">
                 <div class="span12">
                   <table class="data-table">
-                    <!-- d.value is not the correct way to access the value -->
-                    {item.data map { d => <tr><th>{d.name}</th><td>{d.value}</td></tr>}}
+                    {item.data map { d => <tr><th>{d.name}</th><td>{d.value getOrElse ""}</td></tr>}}
                   </table>
                 </div>
               </div>
+              {if(item.href.isDefined) {
+                val uri = item.href.get
+              <xml:group>
               <h3 class="item-data" style="display: none">Data</h3>
               <div class="item-data fluid-row" style="display: none">
                 <div class="span12">
                   <form class="well" action="/write" method="POST">
-                    <input type="hidden" name="url" value={item.href.toURL.toExternalForm}/>
+                    <input type="hidden" name="url" value={uri.toURL.toExternalForm}/>
                     <table class="cj-form">
                       <tbody>{
                           item.data map { d =>
-                            val value = d.value.toString
+                            val value = d.value getOrElse ""
                             <tr>
                               <th title={"name: " + d.name}>
-                                <div>
-                                  <label for={d.name}>{d.prompt.getOrElse(d.name)}</label>
-                                </div>
+                                <label for={d.name}>{d.prompt.getOrElse(d.name)}</label>
                               </th>
                               <td>
                                 <input id={d.name} type="text" name={"param-" + d.name} value={value}/>
@@ -318,6 +302,8 @@ class Views(baseUrl: String) {
                   </form>
                 </div>
               </div>
+              </xml:group>
+              }}
             </div>
           }
         }
@@ -325,10 +311,10 @@ class Views(baseUrl: String) {
       </xml:group>
     }
 
-    def queries(implicit cj: JsonCollection) = {
+    def queries(implicit cj: Collection) = {
       {cj.queries.zipWithIndex map { case (query, i) =>
-        val prompt = Json4sHelpers.getAsString(query.underlying, "prompt")
-        val name = Json4sHelpers.getAsString(query.underlying, "name")
+        val prompt = query.prompt
+        val name = query.name
         val title = prompt.orElse(name).getOrElse("Unnamed query #" + (i + 1))
 
         <h2 id={"query-" + (i + 1)}>{title}</h2>
@@ -337,8 +323,8 @@ class Views(baseUrl: String) {
             <form class="well" action="/render">
               <input type="hidden" name="url" value={query.href.toURL.toExternalForm}/>
               <table class="cj-form">
-                <tbody>{query.data map { d: Property =>
-                  val value = params(d.name).headOption.getOrElse(d.value.toString)
+                <tbody>{query.data map { d =>
+                  val value = targetParams.get(d.name).orElse(d.value) getOrElse ""
                   <tr>
                     <th title={"name: " + d.name}>
                       <div>
@@ -365,15 +351,19 @@ class Views(baseUrl: String) {
       }}
     }
 
-    def template(implicit cj: JsonCollection) =
+    def template(implicit cj: Collection) =
       <div class="row-fluid">
         <div class="span12">
-          <p>The data will be submitted to {href(cj.href)}</p>
           <form class="well" action="/write" method="POST">
-            <input type="hidden" name="url" value={cj.href.toURL.toExternalForm}/>
+            {cj.href map {uri =>
+            <xml:group>
+              <p>The data will be submitted to: {href(uri)}</p>
+              <input type="hidden" name="url" value={uri.toURL.toExternalForm}/>
+            </xml:group>
+            } getOrElse NodeSeq.Empty}
             <table class="cj-form">
               <tbody>{cj.template.get.data map { d =>
-                val value = params(d.name).headOption.getOrElse(d.value.toString)
+                val value = targetParams.get(d.name).orElse(d.value).getOrElse("")
                 <tr>
                   <th title={"name='" + d.name + "'"}>
                     <div>
@@ -389,11 +379,13 @@ class Views(baseUrl: String) {
                 <tr>
                   <th></th>
                   <td>
-                    <!--
-                    input.btn.btn-primary.disabled(type='submit', disabled) Write
-                    p.help-block This collection has a template, but doesn't have a href which is required.
-                    -->
-                    <input class="btn btn-primary" type="submit" value="Write"/>
+                    {cj.href match {
+                    case Some(uri) =>
+                      <input class="btn btn-primary" type="submit" value="Write"/>
+                    case None =>
+                      <input class="btn btn-primary disabled" type="submit" disabled="disabled" value="Write"/>
+                      <p class="help-block">This collection has a template, but doesn't have a href which is required.</p>
+                    }}
                   </td>
                 </tr>
               </tfoot>
@@ -402,36 +394,7 @@ class Views(baseUrl: String) {
         </div>
       </div>
 
-/*
-block error
-  div(class='row-fluid')
-    dl
-      dt title
-      dd
-        if collection.error.title
-          | #{collection.error.title}
-        else
-          i Not set
-      dt code
-      dd
-        if collection.error.code
-          | #{collection.error.code}
-        else
-          i Not set
-      dt message
-      dd
-        if collection.error.message
-          - var lines = collection.error.message.split('\n')
-          if lines.length > 1
-            for line in lines
-              | #{line.replace(/ /g, '&nbsp;')}
-              br
-          else
-            | #{collection.error.message}
-        else
-          i Not set
-*/
-    def error(implicit cj: JsonCollection) = {
+    def error(implicit cj: Collection) = {
       val e = cj.error.get
       val message = e.message map { m =>
         val lines = m.split('\n')
@@ -470,7 +433,7 @@ block error
       </div>
     }
 
-    def parsedContent(implicit cj: JsonCollection) = <xml:group>
+    def parsedContent(implicit cj: Collection) = <xml:group>
       <section id="meta">
         <div class="page-header">
           <h1>Meta</h1>
@@ -606,8 +569,7 @@ block error
         </div>
 
         <script src="/javascripts/jquery-1.7.2.min.js"></script>
-        <script src="/javascripts/gui.js"></script>
-        <script src="/bootstrap-2.0.4/js/bootstrap.min.js"></script>
+        <script src="/bootstrap-2.0.4/js/bootstrap.js"></script>
       </body>
     </html>
 }

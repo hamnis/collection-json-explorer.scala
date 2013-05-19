@@ -23,7 +23,7 @@ object Build extends sbt.Build {
     settings = buildSettings ++ Seq(
       description := "Collection+JSON Explorer",
       name := "collection-json-explorer",
-      libraryDependencies += "net.hamnaberg.rest" %% "scala-json-collection" % "2.1-SNAPSHOT",
+      libraryDependencies += "org.json4s" %% "json4s-native" % "3.1.0",
       libraryDependencies += "net.databinder" %% "unfiltered-filter" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-directives" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-jetty" % "0.6.8",

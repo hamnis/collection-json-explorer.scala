@@ -2,10 +2,9 @@ package io.trygvis.cj
 
 import scala.collection.JavaConversions._
 import scala.io.Source
-import java.net.{HttpURLConnection, URI}
-import java.io.{Writer, StringWriter, PrintWriter, InputStreamReader}
+import java.net.{URLEncoder, HttpURLConnection, URI}
+import java.io._
 import javax.servlet.http.HttpServletRequest
-import net.hamnaberg.json.collection.{NativeJsonCollectionParser, JsonCollection}
 import unfiltered.request._
 import unfiltered.response._
 import unfiltered.filter._
@@ -53,13 +52,33 @@ class Browser extends Plan {
           views = viewsX(r)
         } yield {
           println("url=" + url)
-          val uri = URI.create(url)
+
+          val targetParams = params flatMap {
+            case (key, value) if key.startsWith("param-") =>
+              // It makes no sense to have duplicate query keys so just pick the first one. This is most likely the
+              // same as most web framework does when given multiple query parameters.
+              Some(key.substring(6), value.headOption getOrElse "")
+            case _ =>
+              None
+          }
+
+          println("targetParam=" + targetParams)
+
+          val q = targetParams map { case (key, value) =>
+            URLEncoder.encode(key, "utf-8") + "=" + URLEncoder.encode(value, "utf-8")
+          }
+
+          println("q=" + q)
+
+          val uri = URI.create(url + (if(q.nonEmpty) "?" + q.reduce (_ ++ "&" ++ _) else ""))
+          println("uri=" + uri)
+
           val con = uri.toURL.openConnection().asInstanceOf[HttpURLConnection]
           con.setRequestProperty("accept", "application/vnd.collection+json")
           val content = Source.fromInputStream(con.getInputStream, "utf-8").mkString("")
           val headers = con.getHeaderFields.toMap filter {case (key, _) => key != null}
-          val result = NativeJsonCollectionParser.parseCollection(content)
-          Ok ~> Html5(views.data(uri, params, result, CjResponse(con.getResponseCode, con.getResponseMessage, headers)))
+          val result = Collection.parseCollection(new StringReader(content))
+          Ok ~> Html5(views.data(uri, targetParams, result, CjResponse(con.getResponseCode, con.getResponseMessage, headers)))
         }
     }
   }

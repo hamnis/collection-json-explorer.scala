@@ -1,10 +1,12 @@
 package io.trygvis.cj
 
 import scala.collection.JavaConversions._
-import scala.xml.{Group, NodeSeq, Elem}
-import java.net.{MalformedURLException, URL, URI, URLEncoder}
+import scala.xml.{NodeSeq, Elem}
+import java.net._
 import org.json4s.native.JsonMethods
 import java.io.{PrintWriter, StringWriter, Writer}
+import scala.xml.Group
+import scala.Some
 
 class Views(baseUrl: String) {
 
@@ -120,8 +122,8 @@ class Views(baseUrl: String) {
     layout(content, None)
   }
 
-  def data(url: URI, targetParams: Map[String, String], result: Either[Throwable, Collection], res: CjResponse) = {
-
+  def data(request: CjRequest, response: Option[Either[Throwable, CjResponse]],
+           targetParams: Map[String, String], collection: Option[Either[Throwable, Collection]]) = {
     def href(uri: URI) = {
 //      val splits = uri.getPath.split('/')
 //      for split in splits
@@ -413,25 +415,65 @@ class Views(baseUrl: String) {
       </div>
     }
 
-    def httpResponse = {
+    def httpRequest(req: CjRequest) = {
       <div class="row-fluid">
-        <dl>
-          <dt>Request URL</dt>
-          <dd><a href={render(url)}>{url}</a></dd>
-        </dl>
-        <table>
-          <tr>
-            <td colspan="2">{res.code} {res.status}</td>
-          </tr>
-          {res.headers map { case (header, values) => { values map { value =>
-            <tr>
-              <td><tt>{header}</tt></td>
-              <td><tt>{tryLink(value)}</tt></td>
-            </tr>
-          }}}}
-        </table>
+        {req.url match {
+          case None =>
+            <dl>
+              <dt>Could not parse generated URL</dt>
+              <dd>{req.urlString}</dd>
+            </dl>
+          case _ =>
+        }}
+        {
+        req.headers match {
+          case None =>
+          case Some(headers) =>
+            <h2>Request</h2>
+            <table>
+              <tr>
+                <td colspan="2"><tt>{req.method} {req.url map { url => <a href={render(url.toURI)}>{url.toExternalForm}</a> } getOrElse req.urlString}</tt></td>
+              </tr>
+              {headers map { case (header, values) => { values map { value =>
+              <tr>
+                <td><tt>{header}: </tt></td>
+                <td><tt>{tryLink(value)}</tt></td>
+              </tr>
+            }}}}
+            </table>
+        }}
       </div>
     }
+
+    def httpResponse(r: Either[Throwable, CjResponse]) = { r match {
+      case Left(ex) =>
+        if (ex.isInstanceOf[ConnectException]) {
+          "Unable to connect: " + ex.getMessage
+        } else if (ex.isInstanceOf[UnknownHostException]) {
+          "Unknown host: " + ex.getMessage
+        } else {
+          <xml:group>
+          <p>Unknown error while connecting to remote server</p>
+          <pre>{getStackTrace(ex)}</pre>
+          </xml:group>
+        }
+      case Right(res) =>
+        <div class="row-fluid">
+          <tt>
+          <table>
+            <tr>
+              <td colspan="2">{res.code} {res.status}</td>
+            </tr>
+            {res.headers map { case (header, values) => { values map { value =>
+              <tr>
+                <td>{header}: </td>
+                <td>{tryLink(value)}</td>
+              </tr>
+            }}}}
+          </table>
+          </tt>
+        </div>
+    }}
 
     def parsedContent(implicit cj: Collection) = <xml:group>
       <section id="meta">
@@ -477,13 +519,14 @@ class Views(baseUrl: String) {
     </xml:group>
 
     def innerContent = <xml:group>
-      {result match {
-        case Left(ex) =>
+      {collection match {
+        case None =>
+        case Some(Left(ex)) =>
           <section id="server-error">
             <div class="page-header"><h1>Server Error</h1></div>
             <pre>{getStackTrace(ex)}</pre>
           </section>
-        case Right(cj) => <xml:group>
+        case Some(Right(cj)) => <xml:group>
           {try { parsedContent(cj) } catch { case ex: Exception => <div>Unable to process model: {ex.getMessage}</div> }}
           <section id="formatted-body">
             <div class="page-header"><h1>Formatted Body</h1></div>
@@ -495,23 +538,32 @@ class Views(baseUrl: String) {
           </section>
         </xml:group>
       }}
-      <section id="http-response">
-        <div class="page-header"><h1>HTTP Response</h1></div>
-        {httpResponse}
+      <section id="http-request">
+        <div class="page-header"><h1>HTTP Request</h1></div>
+        {httpRequest(request)}
       </section>
+      {response match {
+        case None =>
+        case Some(some) =>
+          <section id="http-response">
+            <div class="page-header"><h1>HTTP Response</h1></div>
+            {httpResponse(some)}
+          </section>
+      }}
     </xml:group>
 
     def sidebar = <div id="navbar" class="sidebar-nav sidebar-nav-fixed">
       <ul class="nav nav-list">
-        {result match {
-        case Left(_) =>
+        {collection match {
+        case None =>
+        case Some(Left(_)) =>
           <li class="nav-header"><a href="#server-error">Server Error</a></li>
-        case Right(cj) =>
+        case Some(Right(cj)) =>
           {try {
             <xml:group>
               <li class="nav-header active"><a href="#meta">Meta</a></li>
               {cj.links.zipWithIndex map { case (l, i) =>
-                <li><a href={"#link-" + (i + 1)}>{getName(l, "Link", i + 1)}</a></li>
+                <li><a href={"#link-" + (i + 1)}>{getName(l, "Link ", i + 1)}</a></li>
               }}
               {if(cj.items.nonEmpty) {
                 <xml:group>
@@ -532,9 +584,25 @@ class Views(baseUrl: String) {
               {cj.template map { _ => <li class="nav-header"><a href="#template">Template</a></li> } getOrElse NodeSeq.Empty }
               {cj.error map { _ => <li class="nav-header"><a href="#error">Error</a></li> } getOrElse NodeSeq.Empty }
               <li class="nav-header"><a href="#formatted-body">Formatted Body</a></li>
-              <li class="nav-header"><a href="#http-response">HTTP Response</a></li>
             </xml:group>
           } catch { case ex: Exception => <div>Unable to process model: {ex.getMessage}</div> }}
+        }}
+        <li class="nav-header"><a href="#http-request">HTTP Request</a></li>
+        {
+        response match {
+          case None =>
+          case Some(some) =>
+            <li class="nav-header"><a href="#http-response">HTTP Response</a></li>
+            /*
+            <xml:group>
+              <li class="nav-header"><a href="#http-response">HTTP Response</a></li>
+              {some match {
+                case Right(_) =>
+                  <li class="nav-header"><a href="#formatted-body">Formatted Body</a></li>
+                case _ =>
+              }}
+            </xml:group>
+            */
         }}
       </ul>
     </div>

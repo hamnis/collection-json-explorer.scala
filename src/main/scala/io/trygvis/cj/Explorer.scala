@@ -1,8 +1,10 @@
 package io.trygvis.cj
 
 import scala.collection.JavaConversions._
+import scala.util.Properties
+import scala.util.control.Exception._
 import scala.io.Source
-import java.net.{URLEncoder, HttpURLConnection, URI}
+import java.net.{URL, URLEncoder, HttpURLConnection, URI}
 import java.io._
 import javax.servlet.http.HttpServletRequest
 import unfiltered.request._
@@ -10,7 +12,8 @@ import unfiltered.response._
 import unfiltered.filter._
 import unfiltered.jetty._
 
-case class CjResponse(code: Int, status: String, headers: java.util.Map[String, java.util.List[String]])
+case class CjRequest(urlString: String, url: Option[URL], method: String, headers: Option[Map[String, java.util.List[String]]])
+case class CjResponse(code: Int, status: String, headers: java.util.Map[String, java.util.List[String]], content: Option[String])
 
 class Browser extends Plan {
   import unfiltered.directives._, Directives._
@@ -26,7 +29,8 @@ class Browser extends Plan {
     new Views(uri)
   }
 
-  def queryParam(name: String) = Directive[Any, Any, String]({ request: HttpRequest[Any] =>
+  def queryParam(name: String) = Directive[Any, Any, String]({
+    request: HttpRequest[Any] =>
       request.parameterValues(name).headOption match {
         case Some(value) =>
           Result.Success(value)
@@ -51,9 +55,10 @@ class Browser extends Plan {
           params <- QueryParams
           views = viewsX(r)
         } yield {
-          println("url=" + url)
+          val method = Option(r.getParameter("method")).filter {_.nonEmpty} getOrElse "GET"
+          println("Request: " + method + " " + url)
 
-          val targetParams = params flatMap {
+          val collectionParams = params flatMap {
             case (key, value) if key.startsWith("param-") =>
               // It makes no sense to have duplicate query keys so just pick the first one. This is most likely the
               // same as most web framework does when given multiple query parameters.
@@ -62,30 +67,52 @@ class Browser extends Plan {
               None
           }
 
-          println("targetParam=" + targetParams)
-
-          val q = targetParams map { case (key, value) =>
-            URLEncoder.encode(key, "utf-8") + "=" + URLEncoder.encode(value, "utf-8")
+          val q = collectionParams map {
+            case (key, value) =>
+              URLEncoder.encode(key, "utf-8") + "=" + URLEncoder.encode(value, "utf-8")
           }
 
-          println("q=" + q)
+          val collectionUrlString = url + (if (q.nonEmpty) "?" + q.reduce(_ ++ "&" ++ _) else "")
+          val collectionUrl = allCatch opt {URI.create(collectionUrlString).toURL } filter {_.getProtocol.startsWith("http")}
 
-          val uri = URI.create(url + (if(q.nonEmpty) "?" + q.reduce (_ ++ "&" ++ _) else ""))
-          println("uri=" + uri)
+          val conO = collectionUrl map { u: java.net.URL =>
+            val c = u.openConnection().asInstanceOf[HttpURLConnection]
+            c.setRequestProperty("Accept", "application/vnd.collection+json")
+            c.setUseCaches(false)
+            c
+          }
 
-          val con = uri.toURL.openConnection().asInstanceOf[HttpURLConnection]
-          con.setRequestProperty("accept", "application/vnd.collection+json")
-          val content = Source.fromInputStream(con.getInputStream, "utf-8").mkString("")
-          val headers = con.getHeaderFields.toMap filter {case (key, _) => key != null}
-          val result = Collection.parseCollection(new StringReader(content))
-          Ok ~> Html5(views.data(uri, targetParams, result, CjResponse(con.getResponseCode, con.getResponseMessage, headers)))
+          val response = conO map { c => allCatch either {
+            c.connect()
+            val headers = c.getHeaderFields.toMap filter { case (key, value) => key != null }
+            val content = allCatch opt Source.fromInputStream(c.getInputStream, "utf-8").mkString("")
+
+            c.disconnect()
+
+            CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
+          }}
+
+          val requestHeaders = conO map { con =>
+            con.getRequestProperties.toMap filter { case (key, value) => !value.isEmpty && value.get(0) != null }
+          }
+
+          val collection = response match {
+            case Some(Right(CjResponse(_, _, _, Some(content)))) =>
+              Some(Collection.parseCollection(new StringReader(content)))
+            case _ => None
+          }
+
+          Ok ~> Html5(views.data(CjRequest(collectionUrlString, collectionUrl, method, requestHeaders), response, collectionParams, collection))
         }
     }
   }
 }
 
 object Explorer extends App {
-  Http(8080).
+  val port = Properties.envOrElse("PORT", "8080").toInt
+  println("Starting on port:" + port)
+
+  Http(port).
     plan(new Browser).
     resources(getClass.getResource("/public/")).
     run()

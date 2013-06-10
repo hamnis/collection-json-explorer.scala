@@ -7,17 +7,6 @@ import org.json4s.JsonAST._
 import scala.util.Properties
 import org.apache.commons.codec.binary.Base64
 
-case class AuthConfig(hostConfig: HostConfig, username: String, password: String) {
-  def matches(url: java.net.URL) = hostConfig.matches(url.toURI)
-
-  def apply(con: HttpURLConnection) = {
-    con.addRequestProperty("Authorization", "Basic " + base64(username, password))
-  }
-
-  def base64(username: String, password: String): String = Base64.encodeBase64String(s"$username:$password".getBytes("UTF-8")).trim
-
-}
-
 object Config {
   val auth: List[AuthConfig] = Properties.propOrNone("auth-config") match {
     case Some(f) => load(new File(f))
@@ -47,6 +36,17 @@ object Config {
       }
     }
   }
+}
+
+case class AuthConfig(hostConfig: HostConfig, username: String, password: String) {
+  def matches(url: java.net.URL) = hostConfig.matches(url.toURI)
+
+  def apply(con: HttpURLConnection) = {
+    con.addRequestProperty("Authorization", "Basic " + base64(username, password))
+  }
+
+  def base64(username: String, password: String): String = Base64.encodeBase64String(s"$username:$password".getBytes("UTF-8")).trim
+
 }
 
 case class HostConfig(scheme: Option[String], host: String, port: Int) {

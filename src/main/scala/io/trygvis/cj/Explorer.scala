@@ -80,6 +80,7 @@ class Browser extends Plan {
             val c = u.openConnection().asInstanceOf[HttpURLConnection]
             c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
             c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
+            Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c) } //Naiive impl, since this should only react when we get a 401.
             c.setUseCaches(false)
             c
           }

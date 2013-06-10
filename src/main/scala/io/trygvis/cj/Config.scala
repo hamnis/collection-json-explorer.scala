@@ -1,15 +1,25 @@
 package io.trygvis.cj
 
-import java.net.URI
+import java.net.{HttpURLConnection, URI}
 import java.io.{FileReader, File}
 import org.json4s.native.JsonParser
 import org.json4s.JsonAST._
 import scala.util.Properties
+import org.apache.commons.codec.binary.Base64
 
-case class AuthConfig(hostConfig: HostConfig, username: String, password: String)
+case class AuthConfig(hostConfig: HostConfig, username: String, password: String) {
+  def matches(url: java.net.URL) = hostConfig.matches(url.toURI)
 
-object AuthConfig {
-  def load(): List[AuthConfig] = Properties.propOrNone("auth-config") match {
+  def apply(con: HttpURLConnection) = {
+    con.addRequestProperty("Authorization", "Basic " + base64(username, password))
+  }
+
+  def base64(username: String, password: String): String = Base64.encodeBase64String(s"$username:$password".getBytes("UTF-8")).trim
+
+}
+
+object Config {
+  val auth: List[AuthConfig] = Properties.propOrNone("auth-config") match {
     case Some(f) => load(new File(f))
     case None => Nil
   }

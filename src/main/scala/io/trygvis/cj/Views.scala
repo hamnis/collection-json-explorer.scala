@@ -1,6 +1,5 @@
 package io.trygvis.cj
 
-import scala.collection.JavaConversions._
 import scala.xml.{NodeSeq, Elem}
 import java.net._
 import org.json4s.native.JsonMethods
@@ -447,14 +446,12 @@ class Views(baseUrl: String) {
 
     def httpResponse(r: Either[Throwable, CjResponse]) = { r match {
       case Left(ex) =>
-        if (ex.isInstanceOf[ConnectException]) {
-          "Unable to connect: " + ex.getMessage
-        } else if (ex.isInstanceOf[UnknownHostException]) {
-          "Unknown host: " + ex.getMessage
-        } else {
-          <xml:group>
-          <p>Unknown error while connecting to remote server</p>
-          <pre>{getStackTrace(ex)}</pre>
+        ex match {
+          case x: ConnectException => "Unable to connect: " + x.getMessage
+          case x: UnknownHostException =>  "Unknown host: " + x.getMessage
+          case _ => <xml:group>
+            <p>Unknown error while connecting to remote server</p>
+            <pre>{getStackTrace(ex)}</pre>
           </xml:group>
         }
       case Right(res) =>

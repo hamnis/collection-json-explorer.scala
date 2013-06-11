@@ -8,7 +8,6 @@ object Build extends sbt.Build {
   lazy val buildSettings = Defaults.defaultSettings ++ Aether.aetherPublishSettings ++ Seq(
     organization := "io.trygvis",
     scalaVersion := "2.10.0",
-//    crossScalaVersions := Seq("2.9.1", "2.9.2", "2.10.0"),
     scalacOptions := Seq("-deprecation"),
     publishTo <<= (version) apply {
       (v: String) => if (v.trim().endsWith("SNAPSHOT")) Some(Resolvers.sonatypeNexusSnapshots) else Some(Resolvers.sonatypeNexusStaging)
@@ -27,11 +26,14 @@ object Build extends sbt.Build {
       libraryDependencies += "net.databinder" %% "unfiltered-filter" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-directives" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-jetty" % "0.6.8",
-      libraryDependencies += "net.databinder" %% "unfiltered-netty" % "0.6.8",
+      libraryDependencies += "no.arktekk" %% "uri-template" % "1.1-SNAPSHOT",
       libraryDependencies <+= scalaVersion { sv =>
           val ver = if (sv.startsWith("2.10")) "1.13" else "1.12.3"
           "org.specs2" %% "specs2" % ver % "test"
-      }/*,
+      },
+      pomIncludeRepository := {_ => false},
+      resolvers += Resolvers.sonatypeNexusSnapshots
+      /*,
       manifestSetting*/
       ) ++ mavenCentralFrouFrou
     )

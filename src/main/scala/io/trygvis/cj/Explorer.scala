@@ -55,64 +55,102 @@ class Browser extends Plan {
           params <- QueryParams
           views = viewsX(r)
         } yield {
-          val method = Option(r.getParameter("method")).filter {_.nonEmpty} getOrElse "GET"
-          println("Request: " + method + " " + url)
-
-          val collectionParams = params flatMap {
-            case (key, value) if key.startsWith("param-") =>
-              // It makes no sense to have duplicate query keys so just pick the first one. This is most likely the
-              // same as most web framework does when given multiple query parameters.
-              Some(key.substring(6), value.headOption getOrElse "")
-            case _ =>
-              None
-          }
-
-          val q = collectionParams map {
-            case (key, value) =>
-              URLEncoder.encode(key, "utf-8") + "=" + URLEncoder.encode(value, "utf-8")
-          }
-
-          val concat = if (URI.create(url).getQuery == null) "?" else "&"
-          val collectionUrlString = url + (if (q.nonEmpty) concat + q.reduce(_ ++ "&" ++ _) else "")
-          val collectionUrl = allCatch opt {URI.create(collectionUrlString).toURL } filter {_.getProtocol.startsWith("http")}
-
-          val conO = collectionUrl map { u: java.net.URL =>
-            val c = u.openConnection().asInstanceOf[HttpURLConnection]
-            c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
-            c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
-            Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c) } //Naiive impl, since this should only react when we get a 401.
-            c.setUseCaches(false)
-            c
-          }
-
-          val response = conO map { c => allCatch either {
-            c.connect()
-            val headers = c.getHeaderFields.asScala.collect { case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq }.toMap
-            val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
-            val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
-
-            c.disconnect()
-
-            CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
-          }}
-
-          val requestHeaders = conO map { con =>
-            con.getRequestProperties.asScala.collect { case (key, value) if !value.isEmpty && value.get(0) != null => key -> value.asScala.toSeq }.toMap
-          }
-
-          val isCj: (Map[String, Seq[String]]) => Boolean = headers => {
-            headers.get("content-type").exists(_.contains("application/vnd.collection+json"))
-          }
-
-          val collection = response match {
-            case Some(Right(CjResponse(_, _, headers, Some(content)))) if isCj(headers) =>
-              Some(Collection.parseCollection(new StringReader(content)))
-            case _ => None
-          }
-
-          Ok ~> Html5(views.data(CjRequest(collectionUrlString, collectionUrl, method, requestHeaders), response, collectionParams, collection))
+          requestAndRender(url, params, views)
+        }
+      case "/write" =>
+        for {
+          _ <- POST
+          r <- underlying[HttpServletRequest]
+          url <- queryParam("url")
+          params <- QueryParams
+          views = viewsX(r)
+        } yield {
+          requestAndRender(url, params, views)
         }
     }
+  }
+
+  private def requestAndRender(url: String, params: Map[String, Seq[String]], views: Views): ResponseFunction[Any] = {
+    val method = params("method").headOption.filter { _.nonEmpty} getOrElse "GET"
+    println("Request: " + method + " " + url)
+
+    val collectionParams = params flatMap {
+      case (key, value) if key.startsWith("param-") =>
+        // It makes no sense to have duplicate query keys so just pick the first one. This is most likely the
+        // same as most web framework does when given multiple query parameters.
+        Some(key.substring(6), value.headOption getOrElse "")
+      case _ =>
+        None
+    }
+
+    val collectionUrl = method match {
+      case "GET" => {
+        val template = params("template").headOption.exists(_.toBoolean)
+        val expandable = if (template) URITemplateExpandable(url) else URIExpandable(URI.create(url))
+
+        allCatch opt {
+          expandable.expand(collectionParams).toURL
+        } filter {
+          _.getProtocol.startsWith("http")
+        }
+      }
+      case _ => {
+        allCatch opt {
+          URI.create(url).toURL
+        } filter {
+          _.getProtocol.startsWith("http")
+        }
+      }
+    }
+
+    val conO = collectionUrl map { u: java.net.URL =>
+      val c = u.openConnection().asInstanceOf[HttpURLConnection]
+      c.setRequestMethod(method)
+      c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
+      c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
+      Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c)} //Naiive impl, since this should only react when we get a 401.
+      c.setUseCaches(false)
+      c
+    }
+
+    val response = conO map {
+      c => allCatch either {
+        c.connect()
+        if ("POST".equals(c.getRequestMethod) || "PUT".equals(c.getRequestMethod)) {
+          Template(collectionParams).writeTo(c.getOutputStream)
+        }
+        //TODO: Handle redirects
+        val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
+        val headers = c.getHeaderFields.asScala.collect {
+          case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq
+        }.toMap
+        val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
+
+        c.disconnect()
+
+        CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
+      }
+    }
+
+    val requestHeaders = conO map {
+      con =>
+        con.getRequestProperties.asScala.collect {
+          case (key, value) if !value.isEmpty && value.get(0) != null => key -> value.asScala.toSeq
+        }.toMap
+    }
+
+    val isCj: (Map[String, Seq[String]]) => Boolean = headers => {
+      headers.get("content-type").exists(_.contains("application/vnd.collection+json"))
+    }
+
+    val collection = response match {
+      case Some(Right(CjResponse(_, _, headers, Some(content)))) if isCj(headers) =>
+        Some(Collection.parseCollection(new StringReader(content)))
+      case _ => None
+    }
+    val request: CjRequest = CjRequest(url, collectionUrl, method, requestHeaders)
+
+    Ok ~> Html5(views.data(request, response, collectionParams, collection))
   }
 }
 

@@ -25,7 +25,7 @@ class Views(baseUrl: String) {
 
   def delete(uri: URI) = {
     val s = uri.toURL.toExternalForm
-    baseUrl + "render?url=" + URLEncoder.encode(s, "utf-8") + "&action=delete"
+    baseUrl + "render?url=" + URLEncoder.encode(s, "utf-8") + "&method=DELETE" //TODO: this is scary, can be autofollowed by google-bot. Fix ME!
   }
 
   def examples: Array[Elem] = Array("minimal", "collection", "item", "queries", "template", "error") map { name =>
@@ -274,6 +274,7 @@ class Views(baseUrl: String) {
                 <div class="span12">
                   <form class="well" action="/write" method="POST">
                     <input type="hidden" name="url" value={uri.toURL.toExternalForm}/>
+                    <input type="hidden" name="method" value="PUT"/>
                     <table class="cj-form">
                       <tbody>{
                           item.data map { d =>
@@ -322,7 +323,8 @@ class Views(baseUrl: String) {
         <div class="row-fluid">
           <div class="span12">
             <form class="well" action="/render">
-              <input type="hidden" name="url" value={query.href.toURL.toExternalForm}/>
+              <input type="hidden" name="url" value={query.href.toString}/>
+              <input type="hidden" name="template" value={query.encoding == Encoding.UriTemplate}/>
               <table class="cj-form">
                 <tbody>{query.data map { d =>
                   val value = targetParams.get(d.name).orElse(d.value) getOrElse ""
@@ -356,6 +358,7 @@ class Views(baseUrl: String) {
       <div class="row-fluid">
         <div class="span12">
           <form class="well" action="/write" method="POST">
+            <input type="hidden" name="method" value="POST"/>
             {cj.href map {uri =>
             <xml:group>
               <p>The data will be submitted to: {href(uri)}</p>

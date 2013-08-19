@@ -324,7 +324,7 @@ class Views(baseUrl: String) {
           <div class="span12">
             <form class="well" action="/render">
               <input type="hidden" name="url" value={query.href.toString}/>
-              <input type="hidden" name="template" value={query.encoding == Encoding.UriTemplate}/>
+              <input type="hidden" name="template" value={(query.encoding == Encoding.UriTemplate).toString}/>
               <table class="cj-form">
                 <tbody>{query.data map { d =>
                   val value = targetParams.get(d.name).orElse(d.value) getOrElse ""

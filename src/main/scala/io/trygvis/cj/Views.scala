@@ -434,7 +434,7 @@ class Views(baseUrl: String) {
             <h2>Request</h2>
             <table>
               <tr>
-                <td colspan="2"><tt>{req.method} {req.url map { url => <a href={render(url.toURI)}>{url.toExternalForm}</a> } getOrElse req.urlString}</tt></td>
+                <td colspan="2"><tt>{req.method} {req.url map { url => <a href={render(url)}>{url.toString}</a> } getOrElse req.urlString}</tt></td>
               </tr>
               {headers map { case (header, values) => { values map { value =>
               <tr>

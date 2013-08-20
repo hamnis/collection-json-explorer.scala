@@ -12,7 +12,7 @@ import unfiltered.response._
 import unfiltered.filter._
 import unfiltered.jetty._
 
-case class CjRequest(urlString: String, url: Option[URL], method: String, headers: Option[Map[String, Seq[String]]])
+case class CjRequest(urlString: String, url: Option[URI], method: String, headers: Option[Map[String, Seq[String]]])
 case class CjResponse(code: Int, status: String, headers: Map[String, Seq[String]], content: Option[String])
 
 class Browser extends Plan {
@@ -39,6 +39,8 @@ class Browser extends Plan {
       }
   })
 
+  def params = when{ case Params(m) => m}.orElse(BadRequest)
+
   def intent = {
     Path.Intent {
       case "/" =>
@@ -62,10 +64,10 @@ class Browser extends Plan {
           _ <- POST
           r <- underlying[HttpServletRequest]
           url <- queryParam("url")
-          params <- QueryParams
+          p <- params
           views = viewsX(r)
         } yield {
-          requestAndRender(url, params, views)
+          requestAndRender(url, p, views)
         }
     }
   }
@@ -89,69 +91,85 @@ class Browser extends Plan {
         val expandable = if (template) URITemplateExpandable(url) else URIExpandable(URI.create(url))
 
         allCatch opt {
-          expandable.expand(collectionParams).toURL
+          expandable.expand(collectionParams)
         } filter {
-          _.getProtocol.startsWith("http")
+          _.getScheme.startsWith("http")
         }
       }
       case _ => {
         allCatch opt {
-          URI.create(url).toURL
+          URI.create(url)
         } filter {
-          _.getProtocol.startsWith("http")
+          _.getScheme.startsWith("http")
         }
       }
     }
 
-    val conO = collectionUrl map { u: java.net.URL =>
-      val c = u.openConnection().asInstanceOf[HttpURLConnection]
-      c.setRequestMethod(method)
-      c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
-      c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
-      Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c)} //Naiive impl, since this should only react when we get a 401.
-      c.setUseCaches(false)
-      c
-    }
+    val (req, response) = request(url, method, collectionUrl, collectionParams)
 
-    val response = conO map {
-      c => allCatch either {
-        c.connect()
-        if ("POST".equals(c.getRequestMethod) || "PUT".equals(c.getRequestMethod)) {
-          Template(collectionParams).writeTo(c.getOutputStream)
-        }
-        //TODO: Handle redirects
-        val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
-        val headers = c.getHeaderFields.asScala.collect {
-          case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq
-        }.toMap
-        val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
-
-        c.disconnect()
-
-        CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
-      }
-    }
-
-    val requestHeaders = conO map {
-      con =>
-        con.getRequestProperties.asScala.collect {
-          case (key, value) if !value.isEmpty && value.get(0) != null => key -> value.asScala.toSeq
-        }.toMap
-    }
-
+    
     val isCj: (Map[String, Seq[String]]) => Boolean = headers => {
       headers.get("content-type").exists(_.contains("application/vnd.collection+json"))
-    }
+    }  
 
     val collection = response match {
       case Some(Right(CjResponse(_, _, headers, Some(content)))) if isCj(headers) =>
         Some(Collection.parseCollection(new StringReader(content)))
       case _ => None
     }
-    val request: CjRequest = CjRequest(url, collectionUrl, method, requestHeaders)
-
-    Ok ~> Html5(views.data(request, response, collectionParams, collection))
+    Ok ~> Html5(views.data(req, response, collectionParams, collection))
   }
+
+
+  def request(url: String, method: String, collectionUrl: Option[URI], collectionParams: Map[String, String]): (CjRequest, Option[Either[Throwable, CjResponse]]) = {
+    val conn = collectionUrl.map(u => createUrlConnection(u, method))
+
+    val requestHeaders = conn.map(_.getRequestProperties.asScala.collect {
+        case (key, value) if !value.isEmpty && value.get(0) != null => key -> value.asScala.toSeq
+      }.toMap)
+
+    val response = conn.map(c => allCatch either { doRequest(c, collectionParams) })
+
+    val req: CjRequest = CjRequest(url, collectionUrl, method, requestHeaders)
+    req -> response
+  }
+
+  def doRequest(c: HttpURLConnection, collectionParams: Map[String, String] = Map.empty): CjResponse = {          
+      try {
+        if ("POST".equals(c.getRequestMethod) || "PUT".equals(c.getRequestMethod)) {
+          c.setDoOutput(true)
+          Template(collectionParams).writeTo(c.getOutputStream)
+        }
+        if (isRedirect(c.getResponseCode)) {
+          val href = Option(c.getHeaderField("Location")).map(URI.create).getOrElse(sys.error("Failed to redirect; missing Location header"))
+          doRequest(createUrlConnection(href, "GET"))
+        }
+        else {          
+          val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
+          val headers = c.getHeaderFields.asScala.collect {
+            case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq
+          }.toMap
+          val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
+          CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
+        }
+      }
+      finally {
+        c.disconnect()
+      }    
+  }
+
+  private def createUrlConnection(href: URI, method: String) = {    
+    val u = href.toURL
+    val c = u.openConnection().asInstanceOf[HttpURLConnection]
+    c.setRequestMethod(method)
+    c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
+    c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
+    Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c)} //Naiive impl, since this should only react when we get a 401.
+    c.setUseCaches(false)
+    c
+  }
+
+  private def isRedirect(status:Int) = status >= 300 && status < 400
 }
 
 object Explorer extends App {

@@ -26,7 +26,7 @@ object Build extends sbt.Build {
       libraryDependencies += "net.databinder" %% "unfiltered-filter" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-directives" % "0.6.8",
       libraryDependencies += "net.databinder" %% "unfiltered-jetty" % "0.6.8",
-      libraryDependencies += "no.arktekk" %% "uri-template" % "1.1-SNAPSHOT",
+      libraryDependencies += "no.arktekk" %% "uri-template" % "1.0.1",
       libraryDependencies <+= scalaVersion { sv =>
           val ver = if (sv.startsWith("2.10")) "1.13" else "1.12.3"
           "org.specs2" %% "specs2" % ver % "test"

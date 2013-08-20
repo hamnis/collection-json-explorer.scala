@@ -74,7 +74,6 @@ class Browser extends Plan {
 
   private def requestAndRender(url: String, params: Map[String, Seq[String]], views: Views): ResponseFunction[Any] = {
     val method = params("method").headOption.filter { _.nonEmpty} getOrElse "GET"
-    println("Request: " + method + " " + url)
 
     val collectionParams = params flatMap {
       case (key, value) if key.startsWith("param-") =>
@@ -134,24 +133,19 @@ class Browser extends Plan {
     req -> response
   }
 
-  def doRequest(c: HttpURLConnection, collectionParams: Map[String, String] = Map.empty): CjResponse = {          
+  def doRequest(c: HttpURLConnection, collectionParams: Map[String, String] = Map.empty): CjResponse = {       
+      println("Request: " + c.getRequestMethod + " " + c.getURL)   
       try {
         if ("POST".equals(c.getRequestMethod) || "PUT".equals(c.getRequestMethod)) {
           c.setDoOutput(true)
           Template(collectionParams).writeTo(c.getOutputStream)
         }
-        if (isRedirect(c.getResponseCode)) {
-          val href = Option(c.getHeaderField("Location")).map(URI.create).getOrElse(sys.error("Failed to redirect; missing Location header"))
-          doRequest(createUrlConnection(href, "GET"))
-        }
-        else {          
-          val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
-          val headers = c.getHeaderFields.asScala.collect {
-            case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq
-          }.toMap
-          val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
-          CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)
-        }
+        val stream = if (c.getResponseCode >= 400) c.getErrorStream else c.getInputStream
+        val headers = c.getHeaderFields.asScala.collect {
+          case (key, value) if key != null => key.toLowerCase -> value.asScala.toSeq
+        }.toMap
+        val content = allCatch opt Source.fromInputStream(stream, "utf-8").mkString("")
+        CjResponse(c.getResponseCode, c.getResponseMessage, headers, content)        
       }
       finally {
         c.disconnect()
@@ -164,6 +158,7 @@ class Browser extends Plan {
     c.setRequestMethod(method)
     c.setRequestProperty("Accept", "application/vnd.collection+json,*/*;q=0.1")
     c.setRequestProperty("User-Agent", "Collection+json Explorer/1.0")
+    c.setInstanceFollowRedirects(true)
     Config.auth.find(_.matches(u)).foreach { auth => auth.apply(c)} //Naiive impl, since this should only react when we get a 401.
     c.setUseCaches(false)
     c
